@@ -1,0 +1,270 @@
+<?php
+session_start();
+include '../includes/header.php';
+include '../includes/config.php';
+
+// Ensure the user is an admin
+if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'admin') {
+    echo "Access denied. Admins only.";
+    exit;
+}
+
+// Pagination and records per page settings
+$results_per_page = isset($_GET['results_per_page']) ? $_GET['results_per_page'] : 10;
+$page = isset($_GET['page']) ? (int)$_GET['page'] : 1;
+$start_from = ($page - 1) * $results_per_page;
+
+// Sorting parameters
+$sort_column = isset($_GET['sort_column']) ? $_GET['sort_column'] : 'id';
+$sort_order = isset($_GET['sort_order']) ? $_GET['sort_order'] : 'ASC';
+
+// Get all tables dynamically from the database
+$tables_query = "SHOW TABLES FROM ecommerce_system";
+$tables_result = mysqli_query($conn, $tables_query);
+$tables = [];
+while ($table_row = mysqli_fetch_row($tables_result)) {
+    $tables[] = $table_row[0]; // Push table name to the array
+}
+
+$table = isset($_GET['table']) && in_array($_GET['table'], $tables) ? $_GET['table'] : $tables[0]; // Default to the first table
+
+// Query to get data from the selected table
+$query = "SELECT * FROM $table ORDER BY $sort_column $sort_order LIMIT $start_from, $results_per_page";
+$result = mysqli_query($conn, $query);
+
+// Get the total number of rows for pagination
+$total_query = "SELECT COUNT(id) FROM $table";
+$total_result = mysqli_query($conn, $total_query);
+$total_rows = mysqli_fetch_array($total_result)[0];
+$total_pages = ceil($total_rows / $results_per_page);
+?>
+
+<!-- Add Bootstrap CSS (via CDN) -->
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-KyZXEJwT4QSseDgeD5dEGRgpm1fSw7tM6fs4Zl7C9RwsT5iFzB7LRgFmPquxFYdP" crossorigin="anonymous">
+
+<!-- Custom CSS -->
+<style>
+    body {
+        background-color: #f4f4f9;
+    }
+    .container {
+        margin-top: 50px;
+    }
+    table {
+        width: 100%;
+        margin-top: 20px;
+    }
+    th, td {
+        text-align: center;
+    }
+    .btn-view, .btn-edit, .btn-delete {
+        text-decoration: none;
+        margin: 0 5px;
+    }
+    .btn-view {
+        color: #007bff;
+    }
+    .btn-edit {
+        color: #28a745;
+    }
+    .btn-delete {
+        color: #dc3545;
+    }
+    .btn-view:hover, .btn-edit:hover, .btn-delete:hover {
+        text-decoration: underline;
+    }
+    .table th, .table td {
+        vertical-align: middle;
+    }
+    .card-header {
+        background-color: #007bff;
+        color: white;
+    }
+</style>
+
+<div class="container">
+    <h2 class="text-center">Admin Dashboard</h2>
+
+    <!-- Table Selector (Dynamic Tables) -->
+    <div class="mb-3">
+        <label for="tableSelect" class="form-label">Select Table:</label>
+        <select id="tableSelect" class="form-select" onchange="changeTable()">
+            <?php foreach ($tables as $table_name) { ?>
+                <option value="<?php echo $table_name; ?>" <?php if ($table == $table_name) echo 'selected'; ?>>
+                    <?php echo ucfirst($table_name); ?>
+                </option>
+            <?php } ?>
+        </select>
+    </div>
+
+    <!-- Records Per Page -->
+    <div class="mb-3">
+        <label for="recordsPerPage" class="form-label">Records Per Page:</label>
+        <select id="recordsPerPage" class="form-select" onchange="changeRecordsPerPage()">
+            <option value="10" <?php if ($results_per_page == 10) echo 'selected'; ?>>10</option>
+            <option value="25" <?php if ($results_per_page == 25) echo 'selected'; ?>>25</option>
+            <option value="50" <?php if ($results_per_page == 50) echo 'selected'; ?>>50</option>
+        </select>
+    </div>
+
+    <!-- Table inside a Card for better presentation -->
+    <div class="card">
+        <div class="card-header">
+            <h4><?php echo ucfirst($table); ?> Management</h4>
+        </div>
+        <div class="card-body">
+            <table class="table table-bordered table-striped" id="dataTable">
+                <thead>
+                    <tr>
+                        <?php
+                        // Fetch the columns from the selected table dynamically
+                        $columns_query = "DESCRIBE $table";
+                        $columns_result = mysqli_query($conn, $columns_query);
+                        while ($column = mysqli_fetch_assoc($columns_result)) {
+                            // Hide password and user type/role columns
+                            if ($column['Field'] != 'password' && $column['Field'] != 'user_type') {
+                                echo "<th>" . ucfirst($column['Field']) . "</th>";
+                            }
+                        }
+                        ?>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php while ($row = mysqli_fetch_assoc($result)) { ?>
+                        <tr>
+                            <?php
+                                // Display each field in the row dynamically (excluding password and role)
+                                foreach ($row as $key => $value) {
+                                    if ($key != 'password' && $key != 'user_type') { // Don't display password and role
+                                        echo "<td>" . htmlspecialchars($value) . "</td>";
+                                    }
+                                }
+                            ?>
+                            <td>
+                                <button class="btn-view" data-bs-toggle="modal" data-bs-target="#viewModal" data-id="<?php echo $row['id']; ?>">View</button>
+                                <button class="btn-edit" data-bs-toggle="modal" data-bs-target="#editModal" data-id="<?php echo $row['id']; ?>">Edit</button>
+                                <button class="btn-delete" onclick="deleteItem(<?php echo $row['id']; ?>)">Delete</button>
+                            </td>
+                        </tr>
+                    <?php } ?>
+                </tbody>
+            </table>
+
+            <!-- Pagination -->
+            <nav aria-label="Page navigation">
+                <ul class="pagination justify-content-center">
+                    <?php for ($i = 1; $i <= $total_pages; $i++) { ?>
+                        <li class="page-item <?php if ($i == $page) echo 'active'; ?>">
+                            <a class="page-link" href="?page=<?php echo $i; ?>&results_per_page=<?php echo $results_per_page; ?>&table=<?php echo $table; ?>"><?php echo $i; ?></a>
+                        </li>
+                    <?php } ?>
+                </ul>
+            </nav>
+        </div>
+    </div>
+</div>
+
+<!-- Add Bootstrap JS (via CDN) -->
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js" integrity="sha384-pzjw8f+ua7Kw1TIq0Qgz5KweT2OeTS9S/p19URpQ9VsNx3Kh4ptTk5+rKvgnQ1I" crossorigin="anonymous"></script>
+
+<!-- Custom JavaScript -->
+<script>
+    // Handle table change (Dynamic Tables)
+    function changeTable() {
+        var tableSelect = document.getElementById('tableSelect');
+        var selectedTable = tableSelect.value;
+        var recordsPerPage = document.getElementById('recordsPerPage').value;
+        window.location.href = "?table=" + selectedTable + "&results_per_page=" + recordsPerPage;
+    }
+
+    // Handle changing number of records per page
+    function changeRecordsPerPage() {
+        var recordsPerPage = document.getElementById('recordsPerPage').value;
+        var table = document.getElementById('tableSelect').value;
+        window.location.href = "?table=" + table + "&results_per_page=" + recordsPerPage;
+    }
+
+    // Handle deleting an item (User/Product/Vendor)
+    function deleteItem(itemId) {
+        if (confirm('Are you sure you want to delete this item?')) {
+            window.location.href = "delete_item.php?id=" + itemId;
+        }
+    }
+
+    // Handle View Modal
+    var viewModal = document.getElementById('viewModal');
+    viewModal.addEventListener('show.bs.modal', function (event) {
+        var button = event.relatedTarget;
+        var itemId = button.getAttribute('data-id');
+        
+        // Make an AJAX request to get the data for View
+        fetch('view_item.php?id=' + itemId)
+            .then(response => response.json())
+            .then(data => {
+                var modalBody = document.getElementById('viewModalBody');
+                modalBody.innerHTML = '';
+                // Display the data with a specific format (do not show password or role)
+                for (var key in data) {
+                    if (data.hasOwnProperty(key) && key != 'password' && key != 'user_type') {
+                        modalBody.innerHTML += `<p><strong>${key}:</strong> ${data[key]}</p>`;
+                    }
+                }
+            });
+    });
+
+    // Handle Edit Modal
+    var editModal = document.getElementById('editModal');
+    editModal.addEventListener('show.bs.modal', function (event) {
+        var button = event.relatedTarget;
+        var itemId = button.getAttribute('data-id');
+        
+        // Make an AJAX request to get the data for Edit
+        fetch('edit_item.php?id=' + itemId)
+            .then(response => response.json())
+            .then(data => {
+                var modalBody = document.getElementById('editModalBody');
+                modalBody.innerHTML = '<form id="editForm">';  
+                for (var key in data) {
+                    if (data.hasOwnProperty(key) && key != 'password' && key != 'user_type') {
+                        modalBody.innerHTML += ` 
+                            <div class="mb-3">
+                                <label for="${key}" class="form-label">${key}</label>
+                                <input type="text" class="form-control" id="${key}" name="${key}" value="${data[key]}">
+                            </div>
+                        `;
+                    }
+                }
+                modalBody.innerHTML += '<button type="submit" class="btn btn-primary">Save Changes</button>';
+                modalBody.innerHTML += '</form>';
+                
+                // Handle form submission
+                document.getElementById('editForm').addEventListener('submit', function(event) {
+                    event.preventDefault();
+                    var formData = new FormData(event.target);
+                    var updateData = {};
+                    formData.forEach((value, key) => updateData[key] = value);
+                    
+                    // Send updated data to the server
+                    fetch('update_item.php', {
+                        method: 'POST',
+                        body: JSON.stringify({id: itemId, data: updateData}),
+                        headers: {
+                            'Content-Type': 'application/json'
+                        }
+                    })
+                    .then(response => response.json())
+                    .then(result => {
+                        if (result.success) {
+                            alert('Item updated successfully');
+                            location.reload(); // Reload to show updated data
+                        } else {
+                            alert('Error updating item');
+                        }
+                    });
+                });
+            });
+    });
+</script>
+
+<?php include '../includes/footer.php'; ?>
